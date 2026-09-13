@@ -10,8 +10,9 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -26,6 +27,7 @@ public class LivroController {
     }
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
     @Operation(
             summary = "Cadastrar livro",
             description = "Cadastra um novo livro na biblioteca"
@@ -34,14 +36,8 @@ public class LivroController {
             @ApiResponse(responseCode = "201", description = "Livro cadastrado com sucesso"),
             @ApiResponse(responseCode = "400", description = "Dados inválidos ou ISBN já cadastrado")
     })
-    public ResponseEntity<LivroResponse> criar(
-            @Valid @RequestBody LivroRequest request
-    ) {
-        LivroResponse response = livroService.criar(request);
-
-        return ResponseEntity
-                .status(201)
-                .body(response);
+    public LivroResponse criar(@Valid @RequestBody LivroRequest request) {
+        return livroService.criar(request);
     }
 
     @GetMapping("/{id}")
@@ -53,12 +49,8 @@ public class LivroController {
             @ApiResponse(responseCode = "200", description = "Livro encontrado"),
             @ApiResponse(responseCode = "404", description = "Livro não encontrado")
     })
-    public ResponseEntity<LivroResponse> buscarPorId(
-            @PathVariable String id
-    ) {
-        LivroResponse response = livroService.buscarPorId(id);
-
-        return ResponseEntity.ok(response);
+    public LivroResponse buscarPorId(@PathVariable String id) {
+        return livroService.buscarPorId(id);
     }
 
     @GetMapping
@@ -70,22 +62,13 @@ public class LivroController {
             @ApiResponse(responseCode = "200", description = "Lista retornada com sucesso"),
             @ApiResponse(responseCode = "400", description = "Parâmetros inválidos")
     })
-    public ResponseEntity<Page<LivroResponse>> listar(
-            @RequestParam(defaultValue = "0") int pagina,
-            @RequestParam(defaultValue = "10") int tamanho,
+    public Page<LivroResponse> listar(
+            @PageableDefault(size = 10, sort = "titulo") Pageable pageable,
             @RequestParam(required = false) Genero genero
     ) {
-        PageRequest pageable = PageRequest.of(pagina, tamanho);
-
-        Page<LivroResponse> response;
-
-        if (genero == null) {
-            response = livroService.listar(pageable);
-        } else {
-            response = livroService.listarPorGenero(genero, pageable);
-        }
-
-        return ResponseEntity.ok(response);
+        return (genero == null)
+                ? livroService.listar(pageable)
+                : livroService.listarPorGenero(genero, pageable);
     }
 
     @PutMapping("/{id}")
@@ -98,16 +81,15 @@ public class LivroController {
             @ApiResponse(responseCode = "400", description = "Dados inválidos ou ISBN já cadastrado"),
             @ApiResponse(responseCode = "404", description = "Livro não encontrado")
     })
-    public ResponseEntity<LivroResponse> atualizar(
+    public LivroResponse atualizar(
             @PathVariable String id,
             @Valid @RequestBody LivroRequest request
     ) {
-        LivroResponse response = livroService.atualizar(id, request);
-
-        return ResponseEntity.ok(response);
+        return livroService.atualizar(id, request);
     }
 
     @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(
             summary = "Excluir livro",
             description = "Remove um livro da biblioteca"
@@ -116,11 +98,7 @@ public class LivroController {
             @ApiResponse(responseCode = "204", description = "Livro excluído com sucesso"),
             @ApiResponse(responseCode = "404", description = "Livro não encontrado")
     })
-    public ResponseEntity<Void> excluir(
-            @PathVariable String id
-    ) {
+    public void excluir(@PathVariable String id) {
         livroService.excluir(id);
-
-        return ResponseEntity.noContent().build();
     }
 }

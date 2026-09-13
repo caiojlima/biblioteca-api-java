@@ -85,6 +85,7 @@ class LivroControllerIntegrationTest {
             redisTemplate.delete(keys);
         }
     }
+
     @Test
     void deveCadastrarLivro() throws Exception {
 
@@ -136,6 +137,11 @@ class LivroControllerIntegrationTest {
                 .readTree(response)
                 .get("id")
                 .asText();
+
+        mockMvc.perform(get("/livros/{id}", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.titulo").value("Clean Code"));
 
         mockMvc.perform(get("/livros/{id}", id))
                 .andExpect(status().isOk())
@@ -332,6 +338,7 @@ class LivroControllerIntegrationTest {
 
     @Test
     void deveRetornar400QuandoIsbnJaEstiverCadastrado() throws Exception {
+
         LivroRequest primeiroLivro = new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
@@ -362,11 +369,13 @@ class LivroControllerIntegrationTest {
                                 .content(objectMapper.writeValueAsString(segundoLivro))
                 )
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.codigo").value("ISBN_DUPLICADO"));
+                .andExpect(jsonPath("$.codigo")
+                        .value("ISBN_DUPLICADO"));
     }
 
     @Test
     void deveRetornar400QuandoAnoPublicacaoForInvalido() throws Exception {
+
         LivroRequest request = new LivroRequest(
                 "Livro Inválido",
                 "Autor",
@@ -382,11 +391,13 @@ class LivroControllerIntegrationTest {
                                 .content(objectMapper.writeValueAsString(request))
                 )
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.codigo").value("ANO_PUBLICACAO_INVALIDO"));
+                .andExpect(jsonPath("$.codigo")
+                        .value("ANO_PUBLICACAO_INVALIDO"));
     }
 
     @Test
     void deveArmazenarLivroNoRedisAoBuscarPorId() throws Exception {
+
         LivroRequest request = new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
@@ -411,8 +422,17 @@ class LivroControllerIntegrationTest {
                 .get("id")
                 .asText();
 
+        // First request: Redis MISS -> MongoDB -> cache
         mockMvc.perform(get("/livros/{id}", id))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.titulo").value("Clean Code"));
+
+        // Second request: Redis HIT -> LivroResponse
+        mockMvc.perform(get("/livros/{id}", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.titulo").value("Clean Code"));
 
         String cacheKey = "biblioteca:livro:" + id;
 
@@ -432,6 +452,7 @@ class LivroControllerIntegrationTest {
 
     @Test
     void deveInvalidarCacheAoAtualizarLivro() throws Exception {
+
         LivroRequest request = new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
@@ -488,6 +509,7 @@ class LivroControllerIntegrationTest {
 
     @Test
     void deveInvalidarCacheAoExcluirLivro() throws Exception {
+
         LivroRequest request = new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
@@ -528,8 +550,10 @@ class LivroControllerIntegrationTest {
                 redisTemplate.hasKey(cacheKey)
         );
     }
+
     @Test
     void deveRetornar404AoAtualizarLivroInexistente() throws Exception {
+
         LivroRequest request = new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
@@ -551,6 +575,7 @@ class LivroControllerIntegrationTest {
 
     @Test
     void deveRetornar400AoAtualizarComIsbnDeOutroLivro() throws Exception {
+
         LivroRequest primeiroLivro = new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
@@ -611,6 +636,7 @@ class LivroControllerIntegrationTest {
 
     @Test
     void deveRetornar400QuandoAnoPublicacaoForFuturo() throws Exception {
+
         int anoFuturo = Year.now().getValue() + 1;
 
         LivroRequest request = new LivroRequest(
@@ -634,6 +660,7 @@ class LivroControllerIntegrationTest {
 
     @Test
     void deveAtualizarDataAtualizacaoAoAtualizarLivro() throws Exception {
+
         LivroRequest request = new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
@@ -689,14 +716,16 @@ class LivroControllerIntegrationTest {
 
         LocalDateTime dataInclusaoAposAtualizacao =
                 objectMapper.treeToValue(
-                        jsonCriacao.get("dataInclusao"),
+                        jsonAtualizacao.get("dataInclusao"),
                         LocalDateTime.class
                 );
+
         LocalDateTime dataAtualizacao =
                 objectMapper.treeToValue(
-                        jsonCriacao.get("dataAtualizacao"),
+                        jsonAtualizacao.get("dataAtualizacao"),
                         LocalDateTime.class
                 );
+
         assertEquals(
                 dataInclusao,
                 dataInclusaoAposAtualizacao
