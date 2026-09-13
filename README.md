@@ -95,6 +95,13 @@ docker run -d --name mongo-local -p 27017:27017 mongo:8
 docker run -d --name redis-local -p 6379:6379 redis:8
 ```
 
+### Alternativa: Docker Compose
+
+Se preferir, suba MongoDB e Redis de uma vez:
+
+```bash
+docker-compose up -d
+
 ### 2. Executar a aplicação
 
 ```bash
