@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: biblioteca-api
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/biblioteca
+      auto-index-creation: true
+
+    redis:
+      host: localhost
+      port: 6379
