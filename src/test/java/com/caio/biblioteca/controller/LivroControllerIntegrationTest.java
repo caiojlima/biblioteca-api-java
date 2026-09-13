@@ -1,9 +1,11 @@
 package com.caio.biblioteca.controller;
 
+import com.caio.biblioteca.AbstractIntegrationTest;
 import com.caio.biblioteca.dto.request.LivroRequest;
 import com.caio.biblioteca.enums.Genero;
 import com.caio.biblioteca.repository.LivroRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.redis.testcontainers.RedisContainer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,6 +13,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -18,13 +21,14 @@ import org.testcontainers.containers.MongoDBContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import com.redis.testcontainers.RedisContainer;
-
 import java.time.LocalDateTime;
 import java.time.Year;
 import java.util.Set;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -32,18 +36,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
 @AutoConfigureMockMvc
-@Testcontainers
-class LivroControllerIntegrationTest {
+class LivroControllerIntegrationTest extends AbstractIntegrationTest {
 
     @Container
-    static MongoDBContainer mongoDBContainer =
-            new MongoDBContainer("mongo:8");
+    static MongoDBContainer mongoDBContainer = new MongoDBContainer("mongo:8");
 
     @Container
-    static RedisContainer redisContainer =
-            new RedisContainer("redis:8");
+    static RedisContainer redisContainer = new RedisContainer("redis:8");
 
     @Autowired
     private MockMvc mockMvc;
@@ -59,20 +59,9 @@ class LivroControllerIntegrationTest {
 
     @DynamicPropertySource
     static void configurarContainers(DynamicPropertyRegistry registry) {
-        registry.add(
-                "spring.data.mongodb.uri",
-                mongoDBContainer::getReplicaSetUrl
-        );
-
-        registry.add(
-                "spring.data.redis.host",
-                redisContainer::getHost
-        );
-
-        registry.add(
-                "spring.data.redis.port",
-                () -> redisContainer.getMappedPort(6379)
-        );
+        registry.add("spring.data.mongodb.uri", mongoDBContainer::getReplicaSetUrl);
+        registry.add("spring.data.redis.host", redisContainer::getHost);
+        registry.add("spring.data.redis.port", () -> redisContainer.getMappedPort(6379));
     }
 
     @BeforeEach
@@ -80,16 +69,17 @@ class LivroControllerIntegrationTest {
         livroRepository.deleteAll();
 
         Set<String> keys = redisTemplate.keys("biblioteca:livro:*");
-
         if (keys != null && !keys.isEmpty()) {
             redisTemplate.delete(keys);
         }
     }
 
-    @Test
-    void deveCadastrarLivro() throws Exception {
+    // =========================================================
+    // HELPERS
+    // =========================================================
 
-        LivroRequest request = new LivroRequest(
+    private LivroRequest requestPadrao() {
+        return new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
                 "9780132350884",
@@ -97,174 +87,65 @@ class LivroControllerIntegrationTest {
                 Genero.TECNOLOGIA,
                 true
         );
+    }
 
-        mockMvc.perform(
+    private String criarLivroERetornarId(LivroRequest request) throws Exception {
+        String response = mockMvc.perform(
                         post("/livros")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(objectMapper.writeValueAsString(request))
                 )
                 .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        return objectMapper.readTree(response).get("id").asText();
+    }
+
+    // =========================================================
+    // POST /livros
+    // =========================================================
+
+    @Test
+    void deveCadastrarLivro() throws Exception {
+        mockMvc.perform(
+                        post("/livros")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(requestPadrao()))
+                )
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNotEmpty())
                 .andExpect(jsonPath("$.titulo").value("Clean Code"))
                 .andExpect(jsonPath("$.autor").value("Robert C. Martin"))
                 .andExpect(jsonPath("$.isbn").value("9780132350884"))
                 .andExpect(jsonPath("$.genero").value("TECNOLOGIA"))
-                .andExpect(jsonPath("$.disponivel").value(true));
+                .andExpect(jsonPath("$.disponivel").value(true))
+                .andExpect(jsonPath("$.dataInclusao").isNotEmpty());
     }
 
     @Test
-    void deveBuscarLivroPorId() throws Exception {
-
+    void deveNormalizarIsbnComHifensEArmazenarSemSeparadores() throws Exception {
         LivroRequest request = new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                true
-        );
-
-        String response = mockMvc.perform(
-                        post("/livros")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(request))
-                )
-                .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        String id = objectMapper
-                .readTree(response)
-                .get("id")
-                .asText();
-
-        mockMvc.perform(get("/livros/{id}", id))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(id))
-                .andExpect(jsonPath("$.titulo").value("Clean Code"));
-
-        mockMvc.perform(get("/livros/{id}", id))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(id))
-                .andExpect(jsonPath("$.titulo").value("Clean Code"));
-    }
-
-    @Test
-    void deveListarLivros() throws Exception {
-
-        LivroRequest request = new LivroRequest(
-                "Clean Code",
-                "Robert C. Martin",
-                "9780132350884",
+                "978-01-32350-88-4",
                 2008,
                 Genero.TECNOLOGIA,
                 true
         );
 
         mockMvc.perform(
-                post("/livros")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request))
-        );
-
-        mockMvc.perform(
-                        get("/livros")
-                                .param("pagina", "0")
-                                .param("tamanho", "10")
-                )
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content").isArray())
-                .andExpect(jsonPath("$.content[0].titulo")
-                        .value("Clean Code"))
-                .andExpect(jsonPath("$.pageable.pageNumber")
-                        .value(0));
-    }
-
-    @Test
-    void deveAtualizarLivro() throws Exception {
-
-        LivroRequest request = new LivroRequest(
-                "Clean Code",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                true
-        );
-
-        String response = mockMvc.perform(
                         post("/livros")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(objectMapper.writeValueAsString(request))
                 )
                 .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        String id = objectMapper
-                .readTree(response)
-                .get("id")
-                .asText();
-
-        LivroRequest updateRequest = new LivroRequest(
-                "Clean Code - Atualizado",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                false
-        );
-
-        mockMvc.perform(
-                        put("/livros/{id}", id)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(updateRequest))
-                )
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.titulo")
-                        .value("Clean Code - Atualizado"))
-                .andExpect(jsonPath("$.disponivel")
-                        .value(false));
-    }
-
-    @Test
-    void deveExcluirLivro() throws Exception {
-
-        LivroRequest request = new LivroRequest(
-                "Clean Code",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                true
-        );
-
-        String response = mockMvc.perform(
-                        post("/livros")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(request))
-                )
-                .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        String id = objectMapper
-                .readTree(response)
-                .get("id")
-                .asText();
-
-        mockMvc.perform(delete("/livros/{id}", id))
-                .andExpect(status().isNoContent());
-
-        mockMvc.perform(get("/livros/{id}", id))
-                .andExpect(status().isNotFound());
+                .andExpect(jsonPath("$.isbn").value("9780132350884"));
     }
 
     @Test
     void deveRetornar400QuandoDadosForemInvalidos() throws Exception {
-
         LivroRequest request = new LivroRequest(
                 "",
                 "",
@@ -280,73 +161,34 @@ class LivroControllerIntegrationTest {
                                 .content(objectMapper.writeValueAsString(request))
                 )
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.codigo")
-                        .value("DADOS_INVALIDOS"));
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"));
     }
 
     @Test
-    void deveRetornar404QuandoLivroNaoExistir() throws Exception {
-
-        mockMvc.perform(get("/livros/{id}", "id-inexistente"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.codigo")
-                        .value("LIVRO_NAO_ENCONTRADO"));
-    }
-
-    @Test
-    void deveFiltrarLivrosPorGenero() throws Exception {
-
-        LivroRequest tecnologia = new LivroRequest(
+    void deveRetornar400QuandoIsbnForInvalido() throws Exception {
+        LivroRequest request = new LivroRequest(
                 "Clean Code",
                 "Robert C. Martin",
-                "9780132350884",
+                "isbn-invalido",
                 2008,
                 Genero.TECNOLOGIA,
                 true
         );
 
-        LivroRequest fantasia = new LivroRequest(
-                "O Hobbit",
-                "J. R. R. Tolkien",
-                "9780261102217",
-                1937,
-                Genero.FANTASIA,
-                true
-        );
-
         mockMvc.perform(
-                post("/livros")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(tecnologia))
-        );
-
-        mockMvc.perform(
-                post("/livros")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(fantasia))
-        );
-
-        mockMvc.perform(
-                        get("/livros")
-                                .param("genero", "TECNOLOGIA")
+                        post("/livros")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request))
                 )
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content.length()").value(1))
-                .andExpect(jsonPath("$.content[0].titulo")
-                        .value("Clean Code"));
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"))
+                .andExpect(jsonPath("$.mensagem")
+                        .value(org.hamcrest.Matchers.containsString("ISBN")));
     }
 
     @Test
-    void deveRetornar400QuandoIsbnJaEstiverCadastrado() throws Exception {
-
-        LivroRequest primeiroLivro = new LivroRequest(
-                "Clean Code",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                true
-        );
+    void deveRetornar409QuandoIsbnJaEstiverCadastrado() throws Exception {
+        LivroRequest primeiroLivro = requestPadrao();
 
         LivroRequest segundoLivro = new LivroRequest(
                 "Outro Livro",
@@ -357,25 +199,19 @@ class LivroControllerIntegrationTest {
                 true
         );
 
-        mockMvc.perform(
-                post("/livros")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(primeiroLivro))
-        ).andExpect(status().isCreated());
+        criarLivroERetornarId(primeiroLivro);
 
         mockMvc.perform(
                         post("/livros")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(objectMapper.writeValueAsString(segundoLivro))
                 )
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.codigo")
-                        .value("ISBN_DUPLICADO"));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.codigo").value("ISBN_DUPLICADO"));
     }
 
     @Test
     void deveRetornar400QuandoAnoPublicacaoForInvalido() throws Exception {
-
         LivroRequest request = new LivroRequest(
                 "Livro Inválido",
                 "Autor",
@@ -391,252 +227,13 @@ class LivroControllerIntegrationTest {
                                 .content(objectMapper.writeValueAsString(request))
                 )
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.codigo")
-                        .value("ANO_PUBLICACAO_INVALIDO"));
-    }
-
-    @Test
-    void deveArmazenarLivroNoRedisAoBuscarPorId() throws Exception {
-
-        LivroRequest request = new LivroRequest(
-                "Clean Code",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                true
-        );
-
-        String response = mockMvc.perform(
-                        post("/livros")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(request))
-                )
-                .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        String id = objectMapper
-                .readTree(response)
-                .get("id")
-                .asText();
-
-        // First request: Redis MISS -> MongoDB -> cache
-        mockMvc.perform(get("/livros/{id}", id))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(id))
-                .andExpect(jsonPath("$.titulo").value("Clean Code"));
-
-        // Second request: Redis HIT -> LivroResponse
-        mockMvc.perform(get("/livros/{id}", id))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(id))
-                .andExpect(jsonPath("$.titulo").value("Clean Code"));
-
-        String cacheKey = "biblioteca:livro:" + id;
-
-        Long ttl = redisTemplate.getExpire(
-                cacheKey,
-                java.util.concurrent.TimeUnit.SECONDS
-        );
-
-        assertTrue(
-                redisTemplate.hasKey(cacheKey)
-        );
-
-        assertTrue(
-                ttl > 0 && ttl <= 600
-        );
-    }
-
-    @Test
-    void deveInvalidarCacheAoAtualizarLivro() throws Exception {
-
-        LivroRequest request = new LivroRequest(
-                "Clean Code",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                true
-        );
-
-        String response = mockMvc.perform(
-                        post("/livros")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(request))
-                )
-                .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        String id = objectMapper
-                .readTree(response)
-                .get("id")
-                .asText();
-
-        mockMvc.perform(get("/livros/{id}", id))
-                .andExpect(status().isOk());
-
-        String cacheKey = "biblioteca:livro:" + id;
-
-        assertTrue(
-                redisTemplate.hasKey(cacheKey)
-        );
-
-        LivroRequest updateRequest = new LivroRequest(
-                "Clean Code Atualizado",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                false
-        );
-
-        mockMvc.perform(
-                        put("/livros/{id}", id)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(updateRequest))
-                )
-                .andExpect(status().isOk());
-
-        assertFalse(
-                redisTemplate.hasKey(cacheKey)
-        );
-    }
-
-    @Test
-    void deveInvalidarCacheAoExcluirLivro() throws Exception {
-
-        LivroRequest request = new LivroRequest(
-                "Clean Code",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                true
-        );
-
-        String response = mockMvc.perform(
-                        post("/livros")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(request))
-                )
-                .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        String id = objectMapper
-                .readTree(response)
-                .get("id")
-                .asText();
-
-        mockMvc.perform(get("/livros/{id}", id))
-                .andExpect(status().isOk());
-
-        String cacheKey = "biblioteca:livro:" + id;
-
-        assertTrue(
-                redisTemplate.hasKey(cacheKey)
-        );
-
-        mockMvc.perform(delete("/livros/{id}", id))
-                .andExpect(status().isNoContent());
-
-        assertFalse(
-                redisTemplate.hasKey(cacheKey)
-        );
-    }
-
-    @Test
-    void deveRetornar404AoAtualizarLivroInexistente() throws Exception {
-
-        LivroRequest request = new LivroRequest(
-                "Clean Code",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                true
-        );
-
-        mockMvc.perform(
-                        put("/livros/{id}", "id-inexistente")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(request))
-                )
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.codigo")
-                        .value("LIVRO_NAO_ENCONTRADO"));
-    }
-
-    @Test
-    void deveRetornar400AoAtualizarComIsbnDeOutroLivro() throws Exception {
-
-        LivroRequest primeiroLivro = new LivroRequest(
-                "Clean Code",
-                "Robert C. Martin",
-                "9780132350884",
-                2008,
-                Genero.TECNOLOGIA,
-                true
-        );
-
-        LivroRequest segundoLivro = new LivroRequest(
-                "O Hobbit",
-                "J. R. R. Tolkien",
-                "9780261102217",
-                1937,
-                Genero.FANTASIA,
-                true
-        );
-
-        mockMvc.perform(
-                post("/livros")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(primeiroLivro))
-        ).andExpect(status().isCreated());
-
-        String response = mockMvc.perform(
-                        post("/livros")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(segundoLivro))
-                )
-                .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        String idSegundoLivro = objectMapper
-                .readTree(response)
-                .get("id")
-                .asText();
-
-        LivroRequest updateRequest = new LivroRequest(
-                "O Hobbit Atualizado",
-                "J. R. R. Tolkien",
-                "9780132350884",
-                1937,
-                Genero.FANTASIA,
-                false
-        );
-
-        mockMvc.perform(
-                        put("/livros/{id}", idSegundoLivro)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(updateRequest))
-                )
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.codigo")
-                        .value("ISBN_DUPLICADO"));
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"))
+                .andExpect(jsonPath("$.mensagem")
+                        .value(org.hamcrest.Matchers.containsString("anoPublicacao")));
     }
 
     @Test
     void deveRetornar400QuandoAnoPublicacaoForFuturo() throws Exception {
-
         int anoFuturo = Year.now().getValue() + 1;
 
         LivroRequest request = new LivroRequest(
@@ -654,26 +251,310 @@ class LivroControllerIntegrationTest {
                                 .content(objectMapper.writeValueAsString(request))
                 )
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.codigo")
-                        .value("ANO_PUBLICACAO_INVALIDO"));
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"))
+                .andExpect(jsonPath("$.mensagem")
+                        .value(org.hamcrest.Matchers.containsString("anoPublicacao")));
     }
 
     @Test
-    void deveAtualizarDataAtualizacaoAoAtualizarLivro() throws Exception {
+    void deveRetornar400QuandoGeneroForInvalido() throws Exception {
+        String payload = """
+                {
+                  "titulo": "Clean Code",
+                  "autor": "Robert C. Martin",
+                  "isbn": "9780132350884",
+                  "anoPublicacao": 2008,
+                  "genero": "POESIA",
+                  "disponivel": true
+                }
+                """;
 
-        LivroRequest request = new LivroRequest(
-                "Clean Code",
+        mockMvc.perform(
+                        post("/livros")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(payload)
+                )
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"))
+                .andExpect(jsonPath("$.mensagem")
+                        .value(org.hamcrest.Matchers.containsString("genero")));
+    }
+
+    // =========================================================
+    // GET /livros/{id}
+    // =========================================================
+
+    @Test
+    void deveBuscarLivroPorId() throws Exception {
+        String id = criarLivroERetornarId(requestPadrao());
+
+        mockMvc.perform(get("/livros/{id}", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.titulo").value("Clean Code"));
+    }
+
+    @Test
+    void deveRetornar404QuandoLivroNaoExistir() throws Exception {
+        mockMvc.perform(get("/livros/{id}", "id-inexistente"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.codigo").value("LIVRO_NAO_ENCONTRADO"));
+    }
+
+    // =========================================================
+    // GET /livros
+    // =========================================================
+
+    @Test
+    void deveListarLivros() throws Exception {
+        criarLivroERetornarId(requestPadrao());
+
+        mockMvc.perform(
+                        get("/livros")
+                                .param("pagina", "0")
+                                .param("tamanho", "10")
+                )
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").isArray())
+                .andExpect(jsonPath("$.content[0].titulo").value("Clean Code"))
+                .andExpect(jsonPath("$.pageable.pageNumber").value(0));
+    }
+
+    @Test
+    void deveFiltrarLivrosPorGenero() throws Exception {
+        LivroRequest tecnologia = requestPadrao();
+
+        LivroRequest fantasia = new LivroRequest(
+                "O Hobbit",
+                "J. R. R. Tolkien",
+                "9780261102217",
+                1937,
+                Genero.FANTASIA,
+                true
+        );
+
+        criarLivroERetornarId(tecnologia);
+        criarLivroERetornarId(fantasia);
+
+        mockMvc.perform(
+                        get("/livros")
+                                .param("genero", "TECNOLOGIA")
+                )
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].titulo").value("Clean Code"));
+    }
+
+    @Test
+    void deveRetornar400QuandoPaginaForNegativa() throws Exception {
+        mockMvc.perform(
+                        get("/livros")
+                                .param("pagina", "-1")
+                )
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"))
+                .andExpect(jsonPath("$.mensagem")
+                        .value(org.hamcrest.Matchers.containsString("página não pode ser negativa")));
+    }
+
+    @Test
+    void deveRetornar400QuandoTamanhoForZero() throws Exception {
+        mockMvc.perform(
+                        get("/livros")
+                                .param("tamanho", "0")
+                )
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"));
+    }
+
+    @Test
+    void deveRetornar400QuandoTamanhoForMaiorQue100() throws Exception {
+        mockMvc.perform(
+                        get("/livros")
+                                .param("tamanho", "101")
+                )
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"));
+    }
+
+    @Test
+    void deveRetornar400QuandoGeneroForInvalidoNaListagem() throws Exception {
+        mockMvc.perform(
+                        get("/livros")
+                                .param("genero", "POESIA")
+                )
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"));
+    }
+
+    // =========================================================
+    // PUT /livros/{id}
+    // =========================================================
+
+    @Test
+    void deveAtualizarLivro() throws Exception {
+        String id = criarLivroERetornarId(requestPadrao());
+
+        LivroRequest updateRequest = new LivroRequest(
+                "Clean Code - Atualizado",
                 "Robert C. Martin",
                 "9780132350884",
                 2008,
                 Genero.TECNOLOGIA,
+                false
+        );
+
+        mockMvc.perform(
+                        put("/livros/{id}", id)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(updateRequest))
+                )
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.titulo").value("Clean Code - Atualizado"))
+                .andExpect(jsonPath("$.disponivel").value(false));
+    }
+
+    @Test
+    void deveRetornar404AoAtualizarLivroInexistente() throws Exception {
+        mockMvc.perform(
+                        put("/livros/{id}", "id-inexistente")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(requestPadrao()))
+                )
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.codigo").value("LIVRO_NAO_ENCONTRADO"));
+    }
+
+    @Test
+    void deveRetornar409AoAtualizarComIsbnDeOutroLivro() throws Exception {
+        LivroRequest primeiroLivro = requestPadrao();
+
+        LivroRequest segundoLivro = new LivroRequest(
+                "O Hobbit",
+                "J. R. R. Tolkien",
+                "9780261102217",
+                1937,
+                Genero.FANTASIA,
                 true
         );
 
+        criarLivroERetornarId(primeiroLivro);
+        String idSegundoLivro = criarLivroERetornarId(segundoLivro);
+
+        LivroRequest updateRequest = new LivroRequest(
+                "O Hobbit Atualizado",
+                "J. R. R. Tolkien",
+                "9780132350884",
+                1937,
+                Genero.FANTASIA,
+                false
+        );
+
+        mockMvc.perform(
+                        put("/livros/{id}", idSegundoLivro)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(updateRequest))
+                )
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.codigo").value("ISBN_DUPLICADO"));
+    }
+
+    // =========================================================
+    // DELETE /livros/{id}
+    // =========================================================
+
+    @Test
+    void deveExcluirLivro() throws Exception {
+        String id = criarLivroERetornarId(requestPadrao());
+
+        mockMvc.perform(delete("/livros/{id}", id))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/livros/{id}", id))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deveRetornar404AoExcluirLivroInexistente() throws Exception {
+        mockMvc.perform(delete("/livros/{id}", "id-inexistente"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.codigo").value("LIVRO_NAO_ENCONTRADO"));
+    }
+
+    // =========================================================
+    // CACHE
+    // =========================================================
+
+    @Test
+    void deveArmazenarLivroNoRedisAoBuscarPorId() throws Exception {
+        String id = criarLivroERetornarId(requestPadrao());
+
+        mockMvc.perform(get("/livros/{id}", id)).andExpect(status().isOk());
+        mockMvc.perform(get("/livros/{id}", id)).andExpect(status().isOk());
+
+        String cacheKey = "biblioteca:livro:" + id;
+
+        assertTrue(redisTemplate.hasKey(cacheKey));
+
+        Long ttl = redisTemplate.getExpire(cacheKey, java.util.concurrent.TimeUnit.SECONDS);
+
+        assertNotNull(ttl);
+        assertTrue(ttl > 0 && ttl <= 600, "TTL deve estar entre 0 e 600 segundos");
+    }
+
+    @Test
+    void deveInvalidarCacheAoAtualizarLivro() throws Exception {
+        String id = criarLivroERetornarId(requestPadrao());
+
+        mockMvc.perform(get("/livros/{id}", id)).andExpect(status().isOk());
+
+        String cacheKey = "biblioteca:livro:" + id;
+        assertTrue(redisTemplate.hasKey(cacheKey));
+
+        LivroRequest updateRequest = new LivroRequest(
+                "Clean Code Atualizado",
+                "Robert C. Martin",
+                "9780132350884",
+                2008,
+                Genero.TECNOLOGIA,
+                false
+        );
+
+        mockMvc.perform(
+                        put("/livros/{id}", id)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(updateRequest))
+                )
+                .andExpect(status().isOk());
+
+        assertFalse(redisTemplate.hasKey(cacheKey));
+    }
+
+    @Test
+    void deveInvalidarCacheAoExcluirLivro() throws Exception {
+        String id = criarLivroERetornarId(requestPadrao());
+
+        mockMvc.perform(get("/livros/{id}", id)).andExpect(status().isOk());
+
+        String cacheKey = "biblioteca:livro:" + id;
+        assertTrue(redisTemplate.hasKey(cacheKey));
+
+        mockMvc.perform(delete("/livros/{id}", id))
+                .andExpect(status().isNoContent());
+
+        assertFalse(redisTemplate.hasKey(cacheKey));
+    }
+
+    // =========================================================
+    // AUDITORIA
+    // =========================================================
+
+    @Test
+    void deveAtualizarDataAtualizacaoAoAtualizarLivro() throws Exception {
         String response = mockMvc.perform(
                         post("/livros")
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(request))
+                                .content(objectMapper.writeValueAsString(requestPadrao()))
                 )
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.dataInclusao").isNotEmpty())
@@ -682,14 +563,12 @@ class LivroControllerIntegrationTest {
                 .getContentAsString();
 
         var jsonCriacao = objectMapper.readTree(response);
-
         String id = jsonCriacao.get("id").asText();
 
-        LocalDateTime dataInclusao =
-                objectMapper.treeToValue(
-                        jsonCriacao.get("dataInclusao"),
-                        LocalDateTime.class
-                );
+        LocalDateTime dataInclusao = objectMapper.treeToValue(
+                jsonCriacao.get("dataInclusao"),
+                LocalDateTime.class
+        );
 
         LivroRequest updateRequest = new LivroRequest(
                 "Clean Code Atualizado",
@@ -714,25 +593,56 @@ class LivroControllerIntegrationTest {
 
         var jsonAtualizacao = objectMapper.readTree(updateResponse);
 
-        LocalDateTime dataInclusaoAposAtualizacao =
-                objectMapper.treeToValue(
-                        jsonAtualizacao.get("dataInclusao"),
-                        LocalDateTime.class
-                );
-
-        LocalDateTime dataAtualizacao =
-                objectMapper.treeToValue(
-                        jsonAtualizacao.get("dataAtualizacao"),
-                        LocalDateTime.class
-                );
-
-        assertEquals(
-                dataInclusao,
-                dataInclusaoAposAtualizacao
+        LocalDateTime dataInclusaoAposAtualizacao = objectMapper.treeToValue(
+                jsonAtualizacao.get("dataInclusao"),
+                LocalDateTime.class
         );
 
-        assertNotNull(
-                dataAtualizacao
+        LocalDateTime dataAtualizacao = objectMapper.treeToValue(
+                jsonAtualizacao.get("dataAtualizacao"),
+                LocalDateTime.class
         );
+
+        assertEquals(dataInclusao, dataInclusaoAposAtualizacao);
+        assertNotNull(dataAtualizacao);
+    }
+
+    @Test
+    void deveRetornar400QuandoJsonForMalformado() throws Exception {
+        String jsonInvalido = "{ \"titulo\": \"Clean Code\", \"autor\": }";
+
+        mockMvc.perform(
+                        post("/livros")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(jsonInvalido)
+                )
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"));
+    }
+
+    @Test
+    void deveRetornarTodosOsErrosDeValidacaoQuandoMultiplosCamposForemInvalidos() throws Exception {
+        LivroRequest request = new LivroRequest(
+                "",
+                "",
+                "",
+                1000,
+                Genero.TECNOLOGIA,
+                true
+        );
+
+        mockMvc.perform(
+                        post("/livros")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request))
+                )
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DADOS_INVALIDOS"))
+                .andExpect(jsonPath("$.mensagem")
+                        .value(org.hamcrest.Matchers.containsString("titulo")))
+                .andExpect(jsonPath("$.mensagem")
+                        .value(org.hamcrest.Matchers.containsString("autor")))
+                .andExpect(jsonPath("$.mensagem")
+                        .value(org.hamcrest.Matchers.containsString("isbn")));
     }
 }

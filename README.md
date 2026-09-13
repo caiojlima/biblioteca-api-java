@@ -1,596 +1,324 @@
 # Biblioteca API
 
-API REST para gerenciamento de livros de uma biblioteca, desenvolvida com **Java 21**, **Spring Boot**, **MongoDB** e **Redis**.
+API REST para gerenciamento de uma biblioteca de livros, desenvolvida como parte de um desafio técnico. O projeto implementa um CRUD completo com cache Redis, persistência em MongoDB, validação de dados, documentação OpenAPI e testes de unidade e integração com Testcontainers.
 
-O projeto implementa um CRUD completo de livros, com paginação, filtro por gênero, validações de regras de negócio, cache com Redis, tratamento global de exceções, documentação da API com OpenAPI/Swagger e testes automatizados utilizando JUnit 5, Mockito e Testcontainers.
-
-A aplicação foi desenvolvida seguindo uma abordagem de **Clean Architecture simplificada**, mantendo uma separação clara de responsabilidades entre as camadas da aplicação.
-
----
-
-## Índice
-
-* [Tecnologias](#tecnologias)
-* [Arquitetura](#arquitetura)
-* [Funcionalidades](#funcionalidades)
-* [Modelo de dados](#modelo-de-dados)
-* [Regras de negócio](#regras-de-negócio)
-* [Cache com Redis](#cache-com-redis)
-* [Endpoints](#endpoints)
-* [Tratamento de erros](#tratamento-de-erros)
-* [Pré-requisitos](#pré-requisitos)
-* [Como executar](#como-executar)
-* [Documentação da API](#documentação-da-api)
-* [Testes](#testes)
-* [Testes de integração](#testes-de-integração)
-* [Cobertura de código](#cobertura-de-código)
-* [Estrutura do projeto](#estrutura-do-projeto)
-* [Execução completa](#execução-completa)
-* [Considerações finais](#considerações-finais)
+[![Coverage](https://img.shields.io/badge/coverage-89%25-brightgreen)](#-testes)
+[![Java](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.16-brightgreen)](https://spring.io/projects/spring-boot)
+[![MongoDB](https://img.shields.io/badge/MongoDB-8-green)](https://www.mongodb.com/)
+[![Redis](https://img.shields.io/badge/Redis-8-red)](https://redis.io/)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ---
 
-## Tecnologias
+## 📋 Sumário
 
-* **Java 21**
-* **Spring Boot 3**
-* **Spring Data MongoDB**
-* **Spring Data Redis**
-* **MongoDB**
-* **Redis**
-* **Maven**
-* **Lombok**
-* **ModelMapper**
-* **SpringDoc OpenAPI**
-* **JUnit 5**
-* **Mockito**
-* **Testcontainers**
-* **JaCoCo**
-* **Docker Compose**
+- [Stack](#-stack)
+- [Arquitetura](#-arquitetura)
+- [Como Executar](#-como-executar)
+- [Endpoints](#-endpoints)
+- [Cache](#-cache)
+- [Validações](#-validações)
+- [Testes](#-testes)
+- [Decisões Técnicas](#-decisões-técnicas)
 
 ---
 
-## Arquitetura
+## 🛠 Stack
 
-O projeto utiliza uma abordagem simplificada de **Clean Architecture**, separando as responsabilidades da aplicação em camadas.
+| Tecnologia | Versão |
+|---|---|
+| Java | 21 |
+| Spring Boot | 3.5.16 |
+| Spring Data MongoDB | (via Spring Boot) |
+| Spring Data Redis | (via Spring Boot) |
+| Maven | 3.9+ |
+| Lombok | (via Spring Boot) |
+| ModelMapper | 3.2.4 |
+| SpringDoc OpenAPI | 2.8.13 |
+| JUnit 5 | (via Spring Boot) |
+| Mockito | (via Spring Boot) |
+| Testcontainers | (via Spring Boot) |
+| JaCoCo | 0.8.14 |
 
-```text
-Controller
-    ↓
-Service
-    ↓
-Repository
-    ↓
-MongoDB
+---
+
+## 🏗 Arquitetura
+
+O projeto segue o padrão **Clean Architecture simplificado**, com separação clara de responsabilidades:
+
+```
+Controller → Service → Repository → MongoDB
+                ↕
+           Redis (Cache)
 ```
 
-O Redis é utilizado como camada de cache junto ao Service:
+- **Controller**: apenas orquestra requisições HTTP, sem regras de negócio.
+- **Service**: contém todas as regras de negócio, validações e integração com cache.
+- **Repository**: apenas acesso ao MongoDB via Spring Data.
+- **DTOs**: usam `record` do Java 21 para entrada e saída de dados.
+- **Entidade**: anotada com `@Document` do Spring Data MongoDB.
 
-```text
-              ┌─────────────┐
-              │  Controller │
-              └──────┬──────┘
-                     ↓
-              ┌─────────────┐
-              │   Service   │
-              └──────┬──────┘
-                     │
-            ┌────────┴────────┐
-            ↓                 ↓
-       ┌─────────┐       ┌────────────┐
-       │  Redis  │       │ Repository │
-       │  Cache  │       └──────┬─────┘
-       └─────────┘              ↓
-                           ┌──────────┐
-                           │ MongoDB  │
-                           └──────────┘
+### Estrutura de Pacotes
+
 ```
-
-### Responsabilidades das camadas
-
-**Controller**
-
-Responsável pela exposição dos endpoints REST, recebimento das requisições e retorno das respostas HTTP.
-
-**Service**
-
-Concentra as regras de negócio, validações, operações de atualização e integração com o mecanismo de cache.
-
-**Repository**
-
-Responsável exclusivamente pela persistência e consulta dos dados utilizando Spring Data MongoDB.
-
-**Entity**
-
-Representa o documento persistido no MongoDB.
-
-**DTOs**
-
-Definem os contratos de entrada e saída da API, evitando a exposição direta da entidade de persistência.
-
-**Mapper**
-
-Responsável pela conversão entre DTOs e entidades utilizando ModelMapper.
-
-**Exception**
-
-Centraliza as exceções de negócio e o tratamento global das respostas de erro.
-
-**Config**
-
-Contém as configurações relacionadas à infraestrutura e aos frameworks utilizados pela aplicação.
-
----
-
-## Funcionalidades
-
-* Cadastro de livros
-* Consulta de livro por ID
-* Listagem paginada
-* Filtro de livros por gênero
-* Atualização de livros
-* Exclusão de livros
-* Cache de consultas com Redis
-* Invalidação de cache em atualizações e exclusões
-* Validação de ISBN único
-* Validação do ano de publicação
-* Tratamento global de exceções
-* Documentação da API com OpenAPI/Swagger
-* Testes unitários
-* Testes de integração
-* Testcontainers para MongoDB e Redis
-* Análise de cobertura com JaCoCo
-
----
-
-## Modelo de dados
-
-A entidade `Livro` possui os seguintes campos:
-
-| Campo             | Tipo          | Descrição                                         |
-| ----------------- | ------------- | ------------------------------------------------- |
-| `id`              | String        | Identificador gerado automaticamente pelo MongoDB |
-| `titulo`          | String        | Título do livro                                   |
-| `autor`           | String        | Autor do livro                                    |
-| `isbn`            | String        | ISBN único do livro                               |
-| `anoPublicacao`   | Integer       | Ano de publicação                                 |
-| `genero`          | Genero        | Gênero literário                                  |
-| `disponivel`      | Boolean       | Indica se o livro está disponível                 |
-| `dataInclusao`    | LocalDateTime | Data e hora de inclusão                           |
-| `dataAtualizacao` | LocalDateTime | Data e hora da última atualização                 |
-
-### Gêneros disponíveis
-
-```text
-FICCAO_CIENTIFICA
-FANTASIA
-ROMANCE
-TERROR
-BIOGRAFIA
-HISTORIA
-TECNOLOGIA
-INFANTIL
+com.caio.biblioteca
+├── config/              # Configurações (Redis, Mongo, ModelMapper, OpenAPI)
+├── controller/          # Endpoints REST
+├── dto/
+│   ├── request/         # DTOs de entrada (records)
+│   │   └── deserializer/ # Desserializadores customizados (ISBN)
+│   └── response/        # DTOs de saída (records)
+├── entity/              # Entidades MongoDB
+├── enums/               # Enums do domínio (Genero)
+├── exception/           # Exceções customizadas e handler global
+├── mapper/              # Mapeamento entre DTOs e entidades (ModelMapper)
+├── repository/          # Repositórios Spring Data MongoDB
+├── service/             # Regras de negócio
+└── validation/          # Validadores customizados (AnoPublicacaoValido)
 ```
 
 ---
 
-## Regras de negócio
+## 🚀 Como Executar
 
-A API possui as seguintes regras:
+### Pré-requisitos
 
-* `titulo` é obrigatório.
-* `autor` é obrigatório.
-* `isbn` é obrigatório.
-* `genero` é obrigatório.
-* `isbn` deve ser único.
-* `anoPublicacao` deve ser maior que `1000`.
-* `anoPublicacao` não pode ser maior que o ano atual.
-* `genero` deve corresponder a um dos valores definidos no enum `Genero`.
-* `dataInclusao` é preenchida automaticamente na criação.
-* `dataAtualizacao` é atualizada automaticamente durante alterações.
+- Java 21
+- Maven 3.9+
+- Docker (para subir MongoDB e Redis)
 
-As validações de entrada são realizadas através das validações do DTO e as regras de negócio são tratadas na camada de Service.
+### 1. Subir MongoDB e Redis
+
+```bash
+docker run -d --name mongo-local -p 27017:27017 mongo:8
+docker run -d --name redis-local -p 6379:6379 redis:8
+```
+
+### 2. Executar a aplicação
+
+```bash
+mvn spring-boot:run
+```
+
+A API estará disponível em `http://localhost:8080`.
+
+### 3. Acessar a documentação Swagger
+
+Abra o navegador em: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
 
 ---
 
-## Cache com Redis
+## 📡 Endpoints
 
-O Redis é utilizado para otimizar as consultas de livros por ID.
+| Método | Endpoint | Descrição | Status de Sucesso |
+|---|---|---|---|
+| `POST` | `/livros` | Cadastrar um novo livro | `201 Created` |
+| `GET` | `/livros/{id}` | Buscar livro por ID (com cache Redis) | `200 OK` |
+| `GET` | `/livros` | Listar livros com paginação e filtro por gênero | `200 OK` |
+| `PUT` | `/livros/{id}` | Atualizar um livro existente | `200 OK` |
+| `DELETE` | `/livros/{id}` | Remover um livro | `204 No Content` |
 
-A estratégia de cache utiliza:
+### Exemplos de Requisição
 
-* **Cache:** `livro`
-* **Prefixo da chave:** `biblioteca:livro:`
-* **TTL:** 10 minutos
-
-Exemplo de chave:
-
-```text
-biblioteca:livro:{id}
-```
-
-### Funcionamento
-
-Ao consultar um livro através de:
-
-```text
-GET /livros/{id}
-```
-
-a aplicação utiliza o Redis para evitar consultas repetidas ao MongoDB.
-
-Quando um livro é atualizado ou excluído, sua entrada correspondente no cache é invalidada.
-
-O MongoDB permanece como fonte persistente dos dados. O Redis é utilizado apenas como mecanismo de otimização, não sendo a única fonte de armazenamento das informações.
-
----
-
-## Endpoints
-
-| Método   | Endpoint       | Descrição                      |
-| -------- | -------------- | ------------------------------ |
-| `POST`   | `/livros`      | Cadastra um novo livro         |
-| `GET`    | `/livros/{id}` | Busca um livro por ID          |
-| `GET`    | `/livros`      | Lista livros de forma paginada |
-| `PUT`    | `/livros/{id}` | Atualiza um livro              |
-| `DELETE` | `/livros/{id}` | Exclui um livro                |
-
-### Cadastro
-
-```http
-POST /livros
-```
-
-Exemplo de requisição:
+**POST /livros**
 
 ```json
 {
   "titulo": "Clean Code",
   "autor": "Robert C. Martin",
-  "isbn": "9780132350884",
+  "isbn": "978-01-32350-88-4",
   "anoPublicacao": 2008,
   "genero": "TECNOLOGIA",
   "disponivel": true
 }
 ```
 
-### Consulta por ID
+**Resposta (201 Created)**
 
-```http
-GET /livros/{id}
+```json
+{
+  "id": "65f1a2b3c4d5e6f7a8b9c0d1",
+  "titulo": "Clean Code",
+  "autor": "Robert C. Martin",
+  "isbn": "9780132350884",
+  "anoPublicacao": 2008,
+  "genero": "TECNOLOGIA",
+  "disponivel": true,
+  "dataInclusao": "2025-04-27T14:30:00",
+  "dataAtualizacao": null
+}
 ```
 
-### Listagem paginada
+**GET /livros?pagina=0&tamanho=10&genero=TECNOLOGIA**
 
-```http
-GET /livros?pagina=0&tamanho=10
+```json
+{
+  "content": [
+    {
+      "id": "65f1a2b3c4d5e6f7a8b9c0d1",
+      "titulo": "Clean Code",
+      "autor": "Robert C. Martin",
+      "isbn": "9780132350884",
+      "anoPublicacao": 2008,
+      "genero": "TECNOLOGIA",
+      "disponivel": true,
+      "dataInclusao": "2025-04-27T14:30:00",
+      "dataAtualizacao": null
+    }
+  ],
+  "pageable": {
+    "pageNumber": 0,
+    "pageSize": 10,
+    "sort": { "empty": true, "sorted": false, "unsorted": true },
+    "offset": 0,
+    "paged": true,
+    "unpaged": false
+  },
+  "totalElements": 1,
+  "totalPages": 1,
+  "last": true,
+  "size": 10,
+  "number": 0,
+  "numberOfElements": 1,
+  "first": true,
+  "empty": false
+}
 ```
 
-Valores padrão:
+### Formato de Erro Padronizado
 
-* `pagina`: `0`
-* `tamanho`: `10`
-
-### Filtro por gênero
-
-```http
-GET /livros?genero=TECNOLOGIA
-```
-
-Também é possível combinar paginação e filtro:
-
-```http
-GET /livros?pagina=0&tamanho=10&genero=TECNOLOGIA
-```
-
-### Atualização
-
-```http
-PUT /livros/{id}
-```
-
-### Exclusão
-
-```http
-DELETE /livros/{id}
-```
-
-Em caso de sucesso, a exclusão retorna:
-
-```text
-204 No Content
-```
-
----
-
-## Tratamento de erros
-
-A aplicação utiliza um tratamento global de exceções através de `@RestControllerAdvice`.
-
-As respostas de erro seguem um formato padronizado:
+Todos os erros retornam o seguinte formato:
 
 ```json
 {
   "codigo": "LIVRO_NAO_ENCONTRADO",
   "mensagem": "Livro com id '123' não encontrado.",
-  "timestamp": "2026-09-13T12:30:00"
+  "timestamp": "2025-04-27T14:30:00"
 }
 ```
 
-Principais códigos utilizados:
-
-```text
-LIVRO_NAO_ENCONTRADO
-ISBN_DUPLICADO
-ANO_PUBLICACAO_INVALIDO
-DADOS_INVALIDOS
-```
-
-Erros relacionados às regras de negócio são representados pela exceção customizada `NegocioException`.
+| Código | Status HTTP | Descrição |
+|---|---|---|
+| `LIVRO_NAO_ENCONTRADO` | 404 | Livro não encontrado |
+| `ISBN_DUPLICADO` | 409 | ISBN já cadastrado |
+| `ANO_PUBLICACAO_INVALIDO` | 400 | Ano de publicação inválido |
+| `DADOS_INVALIDOS` | 400 | Erro de validação nos campos |
+| `ERRO_INTERNO` | 500 | Erro inesperado no servidor |
 
 ---
 
-## Pré-requisitos
+## 💾 Cache
 
-Para executar o projeto localmente, é necessário ter instalado:
+O projeto utiliza **Spring Cache** com **Redis** como provider para otimizar leituras.
 
-* Java 21
-* Maven 3.9+
-* Docker
-* Docker Compose
+- **Chave de cache padrão**: `biblioteca:livro:{id}`
+- **TTL**: 10 minutos
+- **Invalidação**: O cache é invalidado automaticamente nas operações de atualização (`PUT`) e exclusão (`DELETE`).
+- **Nunca armazenar dados críticos apenas no cache**: O MongoDB é sempre a fonte primária de dados.
 
----
+### Configuração
 
-## Como executar
+O TTL e o prefixo são configuráveis via `application.yml`:
 
-### 1. Clonar o repositório
-
-```bash
-git clone <URL_DO_REPOSITORIO>
-```
-
-Entrar no diretório:
-
-```bash
-cd biblioteca-api
-```
-
-### 2. Subir MongoDB e Redis
-
-Na raiz do projeto:
-
-```bash
-docker compose up -d
-```
-
-Verificar os containers:
-
-```bash
-docker ps
-```
-
-Os serviços estarão disponíveis em:
-
-```text
-MongoDB → localhost:27017
-Redis   → localhost:6379
-```
-
-### 3. Executar a aplicação
-
-```bash
-mvn spring-boot:run
-```
-
-A API estará disponível em:
-
-```text
-http://localhost:8080
+```yaml
+biblioteca:
+  cache:
+    prefixo: "biblioteca:"
+    ttl: 10m
 ```
 
 ---
 
-## Documentação da API
+## ✅ Validações
 
-A documentação interativa está disponível através do Swagger UI:
+### Validações no DTO (`LivroRequest`)
 
-```text
-http://localhost:8080/swagger-ui.html
-```
+| Campo | Validação |
+|---|---|
+| `titulo` | Obrigatório, máximo 255 caracteres |
+| `autor` | Obrigatório, máximo 255 caracteres |
+| `isbn` | Obrigatório, formato ISBN-10 ou ISBN-13 |
+| `anoPublicacao` | Obrigatório, maior que 1000 e menor ou igual ao ano atual |
+| `genero` | Obrigatório, deve ser um valor válido do enum `Genero` |
+| `disponivel` | Obrigatório |
 
-A documentação utiliza **OpenAPI** através do SpringDoc.
+### Normalização de ISBN
 
-Os endpoints possuem documentação de operações e respostas utilizando:
+O ISBN é normalizado automaticamente na desserialização (remove hífens e espaços, converte `X` para maiúsculo) através de um `@JsonDeserialize` customizado. Isso garante que `"978-85-1234-567-8"` e `"9788512345678"` sejam considerados o mesmo ISBN para fins de unicidade.
 
-* `@Operation`
-* `@ApiResponse`
-* `@Tag`
+### Validação de Ano de Publicação
 
----
+A validação do ano é feita via anotação customizada `@AnoPublicacaoValido`, que compara o valor com o ano atual dinamicamente (`Year.now()`).
 
-## Testes
+### Exceções
 
-O projeto possui uma estratégia de testes dividida entre **testes unitários** e **testes de integração**, buscando validar tanto as regras de negócio isoladamente quanto o funcionamento da aplicação integrada às suas principais dependências.
-
-### Testes unitários
-
-Os testes unitários da camada de Service utilizam **JUnit 5** e **Mockito**.
-
-Nessa abordagem, o `LivroRepository` é mockado, permitindo testar as regras de negócio de forma isolada, sem dependência de MongoDB ou Redis.
-
-São cobertos cenários como:
-
-* Criação de livros
-* Consulta por ID
-* Livro não encontrado
-* ISBN duplicado
-* Ano de publicação inválido
-* Atualização de livros
-* Exclusão de livros
-* Validações de regras de negócio
+- `NegocioException`: exceção customizada que carrega um código de erro e um `HttpStatus`.
+- `GlobalExceptionHandler`: trata todas as exceções globalmente via `@RestControllerAdvice`, incluindo:
+    - `NegocioException`
+    - `MethodArgumentNotValidException` (validação de DTO)
+    - `HandlerMethodValidationException` (validação de parâmetros)
+    - `MethodArgumentTypeMismatchException` (enum inválido na query)
+    - `HttpMessageNotReadableException` (JSON malformado)
+    - `ConstraintViolationException`
+    - `Exception` (fallback para 500)
 
 ---
 
-## Testes de integração
+## 🧪 Testes
 
-Os testes de integração validam o comportamento da API através de requisições HTTP utilizando **MockMvc**, executando a aplicação integrada com instâncias reais de **MongoDB** e **Redis**.
+O projeto possui **39 testes** (13 unitários + 26 de integração) com cobertura de **89% de linhas** e **90% de instruções**.
 
-Para isso, o projeto utiliza **Testcontainers**, permitindo que os testes sejam executados em ambientes Docker isolados e reproduzíveis, sem depender de instalações locais de MongoDB ou Redis.
+### Testes Unitários (`LivroServiceTest`)
 
-Os containers utilizados nos testes são:
+- Mockam o repositório e o mapper com Mockito.
+- Cobrem cenários de sucesso, livro não encontrado, ISBN duplicado, ano inválido, entre outros.
 
-* **MongoDB** — persistência dos livros
-* **Redis** — armazenamento e validação do cache
+### Testes de Integração (`LivroControllerIntegrationTest`)
 
-Antes de cada teste, os dados persistidos no MongoDB e as chaves do Redis são limpos para garantir isolamento entre os cenários.
+- Usam **Testcontainers** para subir instâncias reais de MongoDB e Redis.
+- Testam todos os endpoints (`POST`, `GET`, `PUT`, `DELETE`).
+- Cobrem cenários de erro (`400`, `404`, `409`).
+- Testam o comportamento do cache (armazenamento, TTL e invalidação).
 
-### Fluxo validado
-
-Os testes de integração validam o fluxo completo da aplicação:
-
-```text
-HTTP Request
-     ↓
-Controller
-     ↓
-Service
-     ↓
-Repository
-     ↓
-MongoDB
-
-          ↘
-           Redis
-```
-
-Dessa forma, os testes não validam apenas métodos isolados, mas também a integração entre as principais camadas da aplicação e suas dependências externas.
-
-### Cenários de integração
-
-Entre os principais cenários testados estão:
-
-* `POST /livros` — criação de livro
-* `GET /livros/{id}` — consulta por ID
-* `GET /livros` — listagem paginada
-* `GET /livros?genero=...` — filtro por gênero
-* `PUT /livros/{id}` — atualização
-* `DELETE /livros/{id}` — exclusão
-* Dados inválidos retornando `400 Bad Request`
-* Livro inexistente retornando `404 Not Found`
-* ISBN duplicado
-* Ano de publicação inválido
-* Funcionamento do cache com Redis
-* Reutilização de dados armazenados em cache
-* Invalidação do cache após atualização
-* Invalidação do cache após exclusão
-* Atualização das datas de auditoria
-
-### Execução dos testes
-
-Para executar todos os testes:
-
-```bash
-mvn clean test
-```
-
-Os testes de integração iniciam automaticamente os containers necessários através do Testcontainers.
-
-Não é necessário iniciar manualmente MongoDB ou Redis para executar a suíte de testes.
-
----
-
-## Cobertura de código
-
-O projeto utiliza **JaCoCo** para análise de cobertura dos testes.
-
-Para executar a verificação completa:
+### Como Executar os Testes
 
 ```bash
 mvn clean verify
 ```
 
-O projeto possui uma configuração de cobertura mínima de **80% das linhas de código**, conforme solicitado na prova técnica.
+> **Nota:** O comando `mvn test` apenas executa os testes. O comando `mvn verify` também executa o `jacoco:check`, que valida a cobertura mínima de 80% (linhas).
 
-A cobertura atual está acima do requisito mínimo.
+### Relatório de Cobertura
 
-O relatório detalhado pode ser encontrado em:
+O relatório HTML do JaCoCo é gerado em:
 
-```text
+```
 target/site/jacoco/index.html
 ```
 
----
-
-## Estrutura do projeto
-
-```text
-src/
-├── main/
-│   └── java/
-│       └── com/caio/biblioteca/
-│           ├── config/
-│           ├── controller/
-│           ├── dto/
-│           │   ├── request/
-│           │   └── response/
-│           ├── entity/
-│           ├── enums/
-│           ├── exception/
-│           ├── mapper/
-│           ├── repository/
-│           └── service/
-│
-└── test/
-    └── java/
-        └── com/caio/biblioteca/
-            ├── controller/
-            └── service/
-```
-
-### Principais arquivos da raiz
-
-```text
-pom.xml
-docker-compose.yml
-README.md
-```
+Abra este arquivo no navegador para visualizar os detalhes da cobertura.
 
 ---
 
-## Execução completa
+## 🧠 Decisões Técnicas
 
-Para validar o projeto desde a compilação até os testes e análise de cobertura:
+1. **Validação no DTO e no Service**: As validações de formato são feitas no DTO (Bean Validation). As regras de negócio que dependem de estado (como unicidade de ISBN) são feitas no Service. A validação de ano é feita em ambos, como defesa em profundidade.
 
-```bash
-mvn clean verify
-```
+2. **Normalização de ISBN na Desserialização**: Optou-se por normalizar o ISBN via `@JsonDeserialize` no DTO, garantindo que o `@Pattern` valide o valor já limpo e que o Service não precise se preocupar com isso.
 
-Se a execução terminar com:
+3. **Cache com Prefixo Configurável**: O prefixo do cache (`biblioteca:`) e o TTL (10 minutos) são externalizados no `application.yml` e injetados via `@ConfigurationProperties`, permitindo ajustes por ambiente sem recompilação.
 
-```text
-BUILD SUCCESS
-```
+4. **Auditoria com `@EnableMongoAuditing`**: As datas `dataInclusao` e `dataAtualizacao` são preenchidas automaticamente pelo Spring Data MongoDB, sem necessidade de código manual no Service.
 
-o projeto foi compilado, os testes foram executados com sucesso e o requisito mínimo de cobertura foi atendido.
+5. **Índice Único no ISBN**: O campo `isbn` possui `@Indexed(unique = true)` na entidade, garantindo unicidade no nível do banco de dados, além da validação no Service.
+
+6. **Tratamento Global de Exceções**: O `@RestControllerAdvice` centraliza o tratamento de erros, garantindo um formato de resposta padronizado e mensagens descritivas.
+
+7. **Testes com Testcontainers**: A escolha de Testcontainers em vez de mocks para os testes de integração garante que o comportamento real do MongoDB e do Redis seja validado.
 
 ---
 
-## Considerações finais
+## 📄 Licença
 
-O projeto foi desenvolvido buscando atender aos requisitos da prova técnica e, ao mesmo tempo, manter uma estrutura simples, organizada e de fácil manutenção.
-
-As principais decisões foram:
-
-* Separação de responsabilidades através de uma arquitetura em camadas.
-* Uso do MongoDB como persistência principal.
-* Uso do Redis para otimização das consultas por ID.
-* Invalidação do cache após operações de atualização e exclusão.
-* Utilização de DTOs para definir o contrato da API.
-* Utilização do ModelMapper para conversão entre DTOs e entidades.
-* Auditoria automática das datas de inclusão e atualização.
-* Centralização do tratamento de exceções.
-* Testes unitários com Mockito.
-* Testes de integração com MongoDB e Redis através do Testcontainers.
-* Automação da verificação de cobertura através do JaCoCo.
-
-O objetivo foi manter a solução proporcional ao escopo proposto, evitando complexidade desnecessária e priorizando **legibilidade, testabilidade, separação de responsabilidades e facilidade de manutenção**.
+Este projeto está sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.

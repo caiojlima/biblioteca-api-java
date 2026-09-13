@@ -1,0 +1,4 @@
+biblioteca:
+  cache:
+    prefixo: "biblioteca-test:"
+    ttl: 2s
